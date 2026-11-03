@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import {
   getHorizonUrl,
   DASHBOARD_API,
   STATUSPAGE_API,
+  STATUSPAGE_INCIDENTS_API,
   LEDGERS_FOR_CHARTS,
+  LEDGERS_IN_AVERAGE,
 } from '../lib/constants';
 import type { NetworkType } from '../lib/constants';
 import type {
@@ -15,6 +17,7 @@ import type {
   LumenSupplyV2,
   LedgerStat,
   StatusPageSummary,
+  StatusPageIncidents,
   HorizonResponse,
 } from '../types';
 
@@ -37,71 +40,86 @@ export const useLedgers = (network: NetworkType, limit = LEDGERS_FOR_CHARTS) => 
 };
 
 // Streaming ledgers hook
+// Keeps the latest LEDGERS_IN_AVERAGE ledgers, newest first, de-duplicated by sequence
 export const useLedgerStream = (network: NetworkType) => {
   const [ledgers, setLedgers] = useState<LedgerRecord[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const closeStreamRef = useRef<(() => void) | null>(null);
   const horizonUrl = getHorizonUrl(network);
 
-  const startStream = useCallback(async () => {
-    try {
-      // First, get the latest ledger to start streaming from
-      const response = await fetch(`${horizonUrl}/ledgers?order=desc&limit=${LEDGERS_FOR_CHARTS}`);
-      if (!response.ok) throw new Error('Failed to fetch initial ledgers');
-      const data: HorizonResponse<LedgerRecord> = await response.json();
-      
-      setLedgers(data._embedded.records);
-      
-      const server = new StellarSdk.Horizon.Server(horizonUrl);
-      const lastLedger = data._embedded.records[0];
-      
-      // Start streaming from the last ledger
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const closeStream = server
-        .ledgers()
-        .cursor(lastLedger.paging_token)
-        .stream({
-          onmessage: (ledger: any) => {
-            setLedgers(prev => {
-              const newLedgers = [ledger as LedgerRecord, ...prev.slice(0, LEDGERS_FOR_CHARTS - 1)];
-              return newLedgers;
-            });
-          },
-          onerror: () => {
-            console.warn('Ledger stream error');
-            setIsStreaming(false);
-            // Retry after 5 seconds
-            setTimeout(() => startStream(), 5000);
-          },
-        });
-      
-      closeStreamRef.current = closeStream;
-      setIsStreaming(true);
-    } catch (error) {
-      console.error('Failed to start ledger stream:', error);
-      setIsStreaming(false);
-      // Retry after 5 seconds
-      setTimeout(() => startStream(), 5000);
-    }
-  }, [horizonUrl]);
-
   useEffect(() => {
-    startStream();
-    
-    return () => {
-      if (closeStreamRef.current) {
-        closeStreamRef.current();
+    let cancelled = false;
+    let closeStream: (() => void) | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryDelay = 5000;
+
+    setLedgers([]);
+    setIsStreaming(false);
+
+    const scheduleRetry = () => {
+      if (cancelled) return;
+      closeStream?.();
+      closeStream = null;
+      setIsStreaming(false);
+      retryTimer = setTimeout(startStream, retryDelay);
+      // Back off up to a minute so a rate-limited Horizon isn't hammered
+      retryDelay = Math.min(retryDelay * 2, 60000);
+    };
+
+    const startStream = async () => {
+      try {
+        const response = await fetch(`${horizonUrl}/ledgers?order=desc&limit=${LEDGERS_IN_AVERAGE}`);
+        if (!response.ok) throw new Error('Failed to fetch initial ledgers');
+        const data: HorizonResponse<LedgerRecord> = await response.json();
+        if (cancelled) return;
+
+        const records = data._embedded.records;
+        setLedgers(records);
+
+        const server = new StellarSdk.Horizon.Server(horizonUrl);
+        closeStream = server
+          .ledgers()
+          .cursor(records[0]?.paging_token ?? 'now')
+          .stream({
+            onmessage: (message: unknown) => {
+              retryDelay = 5000;
+              const ledger = message as LedgerRecord;
+              setLedgers(prev => {
+                if (prev.some(l => l.sequence === ledger.sequence)) return prev;
+                return [ledger, ...prev]
+                  .sort((a, b) => b.sequence - a.sequence)
+                  .slice(0, LEDGERS_IN_AVERAGE);
+              });
+            },
+            onerror: () => {
+              console.warn('Ledger stream error');
+              scheduleRetry();
+            },
+          });
+        setIsStreaming(true);
+      } catch (error) {
+        console.error('Failed to start ledger stream:', error);
+        scheduleRetry();
       }
     };
-  }, [startStream]);
+
+    startStream();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      closeStream?.();
+    };
+  }, [horizonUrl]);
 
   return { ledgers, isStreaming };
 };
 
-// Fetch operations
+// Fetch recent operations
+// Polled rather than streamed: a single ledger can hold hundreds of operations,
+// which a Horizon stream delivers slower than the network produces them.
 export const useOperations = (network: NetworkType, limit = 20) => {
   const horizonUrl = getHorizonUrl(network);
-  
+
   return useQuery({
     queryKey: ['operations', network, limit],
     queryFn: async (): Promise<OperationRecord[]> => {
@@ -113,70 +131,8 @@ export const useOperations = (network: NetworkType, limit = 20) => {
       return data._embedded.records;
     },
     refetchInterval: 5000,
+    staleTime: 0,
   });
-};
-
-// Streaming operations hook
-export const useOperationStream = (network: NetworkType, limit = 20) => {
-  const [operations, setOperations] = useState<OperationRecord[]>([]);
-  const closeStreamRef = useRef<(() => void) | null>(null);
-  const horizonUrl = getHorizonUrl(network);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const startStream = async () => {
-      try {
-        // Get initial operations
-        const response = await fetch(`${horizonUrl}/operations?order=desc&limit=${limit}`);
-        if (!response.ok) throw new Error('Failed to fetch initial operations');
-        const data: HorizonResponse<OperationRecord> = await response.json();
-        
-        if (isMounted) {
-          setOperations(data._embedded.records);
-        }
-        
-        const server = new StellarSdk.Horizon.Server(horizonUrl);
-        const lastOp = data._embedded.records[0];
-        
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const closeStream = server
-          .operations()
-          .cursor(lastOp?.paging_token || 'now')
-          .stream({
-            onmessage: (operation: any) => {
-              if (isMounted) {
-                setOperations(prev => {
-                  const newOps = [operation as OperationRecord, ...prev.slice(0, limit - 1)];
-                  return newOps;
-                });
-              }
-            },
-            onerror: () => {
-              console.warn('Operation stream error');
-              // Retry after 5 seconds
-              setTimeout(() => startStream(), 5000);
-            },
-          });
-        
-        closeStreamRef.current = closeStream;
-      } catch (error) {
-        console.error('Failed to start operation stream:', error);
-        setTimeout(() => startStream(), 5000);
-      }
-    };
-
-    startStream();
-    
-    return () => {
-      isMounted = false;
-      if (closeStreamRef.current) {
-        closeStreamRef.current();
-      }
-    };
-  }, [horizonUrl, limit]);
-
-  return operations;
 };
 
 // Fetch fee stats
@@ -262,4 +218,29 @@ export const useStatusPage = () => {
     },
     refetchInterval: 60000, // Refresh every minute
   });
+};
+
+// Fetch StatusPage incident history (includes resolved incidents)
+export const useIncidentHistory = () => {
+  return useQuery({
+    queryKey: ['incidentHistory'],
+    queryFn: async (): Promise<StatusPageIncidents> => {
+      const response = await fetch(STATUSPAGE_INCIDENTS_API);
+      if (!response.ok) throw new Error('Failed to fetch incidents');
+      return response.json();
+    },
+    refetchInterval: 300000, // Refresh every 5 minutes
+  });
+};
+
+// Current time, updated every second, for live "ago" labels
+export const useNow = (intervalMs = 1000) => {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+
+  return now;
 };

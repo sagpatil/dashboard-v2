@@ -204,6 +204,13 @@ export interface StatusPageSummary {
   }>;
 }
 
+export type StatusPageIncident = StatusPageSummary['incidents'][number];
+
+export interface StatusPageIncidents {
+  page: StatusPageSummary['page'];
+  incidents: StatusPageIncident[];
+}
+
 // Network status derived from ledger data
 export interface NetworkStatus {
   status: 'operational' | 'slow' | 'very_slow' | 'down';
@@ -212,6 +219,7 @@ export interface NetworkStatus {
   lastLedgerCloseTime: string;
   avgLedgerCloseTime: number;
   secondsSinceLastLedger: number;
+  lastLedgerDuration: number | null;
 }
 
 // Chart data types

@@ -9,18 +9,22 @@ import {
   Legend,
 } from 'recharts';
 import type { LedgerRecord } from '../types';
+import { LEDGERS_FOR_CHARTS, getHorizonUrl } from '../lib/constants';
+import type { NetworkType } from '../lib/constants';
+import { ApiLink } from './ApiLink';
 
 interface TransactionsChartProps {
   ledgers: LedgerRecord[];
+  network: NetworkType;
   isLoading?: boolean;
 }
 
-export function TransactionsChart({ ledgers, isLoading }: TransactionsChartProps) {
+export function TransactionsChart({ ledgers, network, isLoading }: TransactionsChartProps) {
   const chartData = useMemo(() => {
     if (ledgers.length === 0) return [];
     
     // Reverse to show oldest to newest (left to right)
-    return [...ledgers].reverse().map((ledger) => ({
+    return ledgers.slice(0, LEDGERS_FOR_CHARTS).reverse().map((ledger) => ({
       sequence: ledger.sequence,
       successfulTxs: ledger.successful_transaction_count,
       operations: ledger.operation_count,
@@ -44,6 +48,7 @@ export function TransactionsChart({ ledgers, isLoading }: TransactionsChartProps
     <div className="card col-span-6">
       <div className="card-header">
         <div className="card-title">Successful Txs & Ops (Last {chartData.length} Ledgers)</div>
+        <ApiLink href={`${getHorizonUrl(network)}/ledgers?order=desc&limit=${LEDGERS_FOR_CHARTS}`} />
       </div>
       <div className="chart-container">
         <ResponsiveContainer width="100%" height="100%">
@@ -91,18 +96,14 @@ export function TransactionsChart({ ledgers, isLoading }: TransactionsChartProps
   );
 }
 
-interface FailedTransactionsChartProps {
-  ledgers: LedgerRecord[];
-  isLoading?: boolean;
-}
-
-export function FailedTransactionsChart({ ledgers, isLoading }: FailedTransactionsChartProps) {
+export function SuccessfulFailedChart({ ledgers, network, isLoading }: TransactionsChartProps) {
   const chartData = useMemo(() => {
     if (ledgers.length === 0) return [];
     
     // Reverse to show oldest to newest (left to right)
-    return [...ledgers].reverse().map((ledger) => ({
+    return ledgers.slice(0, LEDGERS_FOR_CHARTS).reverse().map((ledger) => ({
       sequence: ledger.sequence,
+      successfulTxs: ledger.successful_transaction_count,
       failedTxs: ledger.failed_transaction_count,
     }));
   }, [ledgers]);
@@ -111,7 +112,7 @@ export function FailedTransactionsChart({ ledgers, isLoading }: FailedTransactio
     return (
       <div className="card col-span-6">
         <div className="card-header">
-          <div className="card-title">Failed Transactions</div>
+          <div className="card-title">Successful & Failed Transactions</div>
         </div>
         <div className="chart-container">
           <div className="skeleton" style={{ width: '100%', height: '100%' }} />
@@ -123,7 +124,8 @@ export function FailedTransactionsChart({ ledgers, isLoading }: FailedTransactio
   return (
     <div className="card col-span-6">
       <div className="card-header">
-        <div className="card-title">Failed Txs (Last {chartData.length} Ledgers)</div>
+        <div className="card-title">Successful & Failed Txs (Last {chartData.length} Ledgers)</div>
+        <ApiLink href={`${getHorizonUrl(network)}/ledgers?order=desc&limit=${LEDGERS_FOR_CHARTS}`} />
       </div>
       <div className="chart-container">
         <ResponsiveContainer width="100%" height="100%">
@@ -147,11 +149,21 @@ export function FailedTransactionsChart({ ledgers, isLoading }: FailedTransactio
                 fontSize: 12,
               }}
               labelStyle={{ color: 'var(--color-text-primary)' }}
-              formatter={(value) => [value, 'Failed Txs']}
               labelFormatter={(label) => `Ledger #${label}`}
+            />
+            <Legend 
+              wrapperStyle={{ fontSize: 11, paddingTop: 10 }}
+            />
+            <Bar 
+              dataKey="successfulTxs" 
+              name="Successful"
+              stackId="txs"
+              fill="var(--chart-color-1)" 
             />
             <Bar 
               dataKey="failedTxs" 
+              name="Failed"
+              stackId="txs"
               fill="var(--chart-color-3)" 
               radius={[2, 2, 0, 0]}
             />

@@ -96,7 +96,8 @@ code, .mono {
 
 .app-header-nav {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 24px;
 }
 
 .app-main {
@@ -576,4 +577,86 @@ a:hover {
   font-size: 48px;
   margin-bottom: 16px;
   opacity: 0.5;
+}
+
+/* Maintenance banner */
+.maintenance-banner {
+  background: rgba(210, 153, 34, 0.12);
+  border-bottom: 1px solid var(--color-warning);
+  padding: 12px 24px;
+}
+
+.maintenance-banner-item + .maintenance-banner-item {
+  margin-top: 8px;
+}
+
+.maintenance-banner-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.maintenance-banner-body {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+}
+
+/* Incident history */
+.incident-history {
+  list-style: none;
+  font-size: 13px;
+}
+
+.incident-history li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.incident-history-time {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--color-accent-light);
+  cursor: pointer;
+  font-size: 13px;
+  margin-top: 8px;
+  padding: 0;
+}
+
+/* Header links */
+.app-header-links {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.app-header-links a {
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 640px) {
+  .app-header {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .app-header-links {
+    display: none;
+  }
+
+  .network-toggle button {
+    padding: 6px 12px;
+  }
+
+  .maintenance-banner {
+    padding: 12px 16px;
+  }
 }

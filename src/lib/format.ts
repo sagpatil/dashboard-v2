@@ -37,6 +37,14 @@ export const timeAgo = (date: string | Date): string => {
   return formatDistanceToNow(d, { addSuffix: true });
 };
 
+// Compact "time ago" with second precision under a minute, e.g. "7s ago"
+export const shortTimeAgo = (date: string | Date, now = Date.now()): string => {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const seconds = Math.max(0, Math.floor((now - d.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  return formatDistanceToNow(d, { addSuffix: true });
+};
+
 // Format seconds to human readable
 export const formatSeconds = (seconds: number): string => {
   if (seconds < 60) return `${seconds.toFixed(1)}s`;

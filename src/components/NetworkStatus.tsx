@@ -1,21 +1,28 @@
 import { useMemo } from 'react';
 import type { LedgerRecord, NetworkStatus as NetworkStatusType } from '../types';
-import { formatNumber, formatSeconds, timeAgo } from '../lib/format';
-import { LEDGERS_IN_AVERAGE } from '../lib/constants';
+import { formatNumber, formatSeconds } from '../lib/format';
+import { LEDGERS_IN_AVERAGE, getHorizonUrl } from '../lib/constants';
+import type { NetworkType } from '../lib/constants';
+import { useNow } from '../hooks/useHorizon';
 
 interface NetworkStatusProps {
   ledgers: LedgerRecord[];
+  network: NetworkType;
   isLoading?: boolean;
 }
 
-export function NetworkStatus({ ledgers, isLoading }: NetworkStatusProps) {
+export function NetworkStatus({ ledgers, network, isLoading }: NetworkStatusProps) {
+  const now = useNow();
+
   const status = useMemo((): NetworkStatusType | null => {
     if (!ledgers.length) return null;
 
     const latestLedger = ledgers[0];
     const lastCloseTime = new Date(latestLedger.closed_at);
-    const now = new Date();
-    const secondsSinceLastLedger = (now.getTime() - lastCloseTime.getTime()) / 1000;
+    const secondsSinceLastLedger = Math.max(0, (now - lastCloseTime.getTime()) / 1000);
+    const lastLedgerDuration = ledgers.length > 1
+      ? (lastCloseTime.getTime() - new Date(ledgers[1].closed_at).getTime()) / 1000
+      : null;
 
     // Calculate average close time from available ledgers (up to LEDGERS_IN_AVERAGE)
     const ledgersForAvg = ledgers.slice(0, Math.min(ledgers.length, LEDGERS_IN_AVERAGE));
@@ -46,8 +53,9 @@ export function NetworkStatus({ ledgers, isLoading }: NetworkStatusProps) {
       lastLedgerCloseTime: latestLedger.closed_at,
       avgLedgerCloseTime: avgCloseTime,
       secondsSinceLastLedger,
+      lastLedgerDuration,
     };
-  }, [ledgers]);
+  }, [ledgers, now]);
 
   if (isLoading || !status) {
     return (
@@ -74,10 +82,20 @@ export function NetworkStatus({ ledgers, isLoading }: NetworkStatusProps) {
     <div className="card col-span-6">
       <div className="card-header">
         <div className="card-title">Network Status</div>
-        <span className={`card-badge ${currentStatus.className}`}>
-          <span className={`status-indicator ${currentStatus.className}`} />
-          {currentStatus.label}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className={`card-badge ${currentStatus.className}`}>
+            <span className={`status-indicator ${currentStatus.className}`} />
+            {currentStatus.label}
+          </span>
+          <a
+            href={`${getHorizonUrl(network)}/ledgers?order=desc&limit=${LEDGERS_IN_AVERAGE}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="api-link"
+          >
+            API
+          </a>
+        </div>
       </div>
       
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16, marginTop: 16 }}>
@@ -90,8 +108,11 @@ export function NetworkStatus({ ledgers, isLoading }: NetworkStatusProps) {
           <div className="card-value small mono">{formatNumber(status.lastLedgerSequence)}</div>
         </div>
         <div>
-          <div className="card-title" style={{ marginBottom: 4 }}>Ledger Close Time</div>
-          <div className="card-value small">{timeAgo(status.lastLedgerCloseTime)}</div>
+          <div className="card-title" style={{ marginBottom: 4 }}>Last Closed</div>
+          <div className="card-value small">{Math.floor(status.secondsSinceLastLedger)}s ago</div>
+          {status.lastLedgerDuration !== null && (
+            <div className="card-subtitle">in {formatSeconds(status.lastLedgerDuration)}</div>
+          )}
         </div>
         <div>
           <div className="card-title" style={{ marginBottom: 4 }}>Avg Close Time</div>

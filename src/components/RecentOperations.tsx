@@ -1,8 +1,9 @@
 import type { OperationRecord } from '../types';
-import { truncateAccount, timeAgo, formatNumber } from '../lib/format';
+import { truncateAccount, shortTimeAgo, formatNumber } from '../lib/format';
 import { KNOWN_ACCOUNTS, getHorizonUrl } from '../lib/constants';
 import type { NetworkType } from '../lib/constants';
 import BigNumber from 'bignumber.js';
+import { useNow } from '../hooks/useHorizon';
 
 interface RecentOperationsProps {
   operations: OperationRecord[];
@@ -62,6 +63,7 @@ function formatOperationType(type: string): string {
 
 export function RecentOperations({ operations, network, isLoading }: RecentOperationsProps) {
   const horizonUrl = getHorizonUrl(network);
+  const now = useNow();
 
   if (isLoading) {
     return (
@@ -134,7 +136,7 @@ export function RecentOperations({ operations, network, isLoading }: RecentOpera
                   {getOperationDetails(op)}
                 </td>
                 <td style={{ color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
-                  {timeAgo(op.created_at)}
+                  {shortTimeAgo(op.created_at, now)}
                 </td>
               </tr>
             ))}

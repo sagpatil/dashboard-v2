@@ -1,12 +1,15 @@
 import type { FeeStats as FeeStatsType } from '../types';
 import { formatFee } from '../lib/format';
+import { getHorizonUrl } from '../lib/constants';
+import type { NetworkType } from '../lib/constants';
 
 interface FeeStatsProps {
   feeStats: FeeStatsType | undefined;
+  network: NetworkType;
   isLoading?: boolean;
 }
 
-export function FeeStats({ feeStats, isLoading }: FeeStatsProps) {
+export function FeeStats({ feeStats, network, isLoading }: FeeStatsProps) {
   if (isLoading || !feeStats) {
     return (
       <div className="card col-span-6">
@@ -26,7 +29,7 @@ export function FeeStats({ feeStats, isLoading }: FeeStatsProps) {
       <div className="card-header">
         <div className="card-title">Fee Stats (Last 5 Ledgers)</div>
         <a 
-          href="https://horizon.stellar.org/fee_stats" 
+          href={`${getHorizonUrl(network)}/fee_stats`} 
           target="_blank" 
           rel="noopener noreferrer"
           className="api-link"

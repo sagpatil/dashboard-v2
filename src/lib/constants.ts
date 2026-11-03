@@ -12,8 +12,13 @@ export const STATUSPAGE_API = import.meta.env.DEV
   ? '/api/statuspage/v2/summary.json'
   : 'https://9sl3dhr1twv1.statuspage.io/api/v2/summary.json';
 
+export const STATUSPAGE_INCIDENTS_API = import.meta.env.DEV
+  ? '/api/statuspage/v2/incidents.json'
+  : 'https://9sl3dhr1twv1.statuspage.io/api/v2/incidents.json';
+
 // Network types
 export type NetworkType = 'mainnet' | 'testnet';
+export type NetworkView = NetworkType | 'both';
 
 export const getHorizonUrl = (network: NetworkType): string => {
   return network === 'mainnet' ? HORIZON_MAINNET : HORIZON_TESTNET;

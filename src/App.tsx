@@ -1,43 +1,22 @@
 import { useState } from 'react';
-import type { NetworkType } from './lib/constants';
-import { 
-  useLedgerStream, 
-  useFeeStats, 
-  useOperationStream, 
-  useLumenSupply,
-  useHistoricalLedgers,
-  useStatusPage,
-} from './hooks/useHorizon';
-import { NetworkStatus } from './components/NetworkStatus';
-import { FeeStats } from './components/FeeStats';
-import { LumenSupply } from './components/LumenSupply';
-import { RecentOperations } from './components/RecentOperations';
-import { LedgerCloseChart } from './components/LedgerCloseChart';
-import { TransactionsChart, FailedTransactionsChart } from './components/TransactionsChart';
-import { HistoricalChart } from './components/HistoricalChart';
+import type { NetworkView } from './lib/constants';
+import { useStatusPage, useIncidentHistory } from './hooks/useHorizon';
+import { NetworkPanel } from './components/NetworkPanel';
 import { Incidents } from './components/Incidents';
-import { FriendbotBalance } from './components/AccountBalance';
+import { MaintenanceBanner } from './components/MaintenanceBanner';
+
+const NETWORK_VIEWS: Array<{ value: NetworkView; label: string }> = [
+  { value: 'both', label: 'Both' },
+  { value: 'mainnet', label: 'Mainnet' },
+  { value: 'testnet', label: 'Testnet' },
+];
 
 function App() {
-  const [network, setNetwork] = useState<NetworkType>('mainnet');
-  
-  // Ledger streaming
-  const { ledgers, isStreaming } = useLedgerStream(network);
-  
-  // Fee stats
-  const { data: feeStats, isLoading: feeStatsLoading } = useFeeStats(network);
-  
-  // Operations streaming
-  const operations = useOperationStream(network, 20);
-  
-  // Lumen supply (mainnet only)
-  const { data: lumenSupply, isLoading: lumenSupplyLoading } = useLumenSupply();
-  
-  // Historical ledger data (mainnet only)
-  const { data: historicalLedgers, isLoading: historicalLoading } = useHistoricalLedgers();
+  const [view, setView] = useState<NetworkView>('both');
   
   // StatusPage
   const { data: statusPage, isLoading: statusLoading } = useStatusPage();
+  const { data: incidentHistory } = useIncidentHistory();
 
   return (
     <div className="app">
@@ -52,80 +31,29 @@ function App() {
         </div>
         
         <div className="app-header-nav">
+          <nav className="app-header-links">
+            <a href="https://www.stellar.org/privacy-policy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+            <a href="https://www.stellar.org/terms-of-service" target="_blank" rel="noopener noreferrer">Terms of Service</a>
+            <a href="https://github.com/accordeiro/dashboard-v2" target="_blank" rel="noopener noreferrer">GitHub</a>
+          </nav>
           <div className="network-toggle">
-            <button 
-              className={network === 'mainnet' ? 'active' : ''}
-              onClick={() => setNetwork('mainnet')}
-            >
-              Mainnet
-            </button>
-            <button 
-              className={network === 'testnet' ? 'active' : ''}
-              onClick={() => setNetwork('testnet')}
-            >
-              Testnet
-            </button>
+            {NETWORK_VIEWS.map(({ value, label }) => (
+              <button
+                key={value}
+                className={view === value ? 'active' : ''}
+                onClick={() => setView(value)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </header>
 
+      <MaintenanceBanner statusPage={statusPage} />
+
       <main className="app-main">
-        {/* Network Status Section */}
-        <section className="dashboard-section">
-          <h2 className="section-title">
-            {network === 'mainnet' ? 'Live Network' : 'Test Network'}
-            {isStreaming && <span className="live-indicator">Live</span>}
-          </h2>
-          <div className="dashboard-grid">
-            <NetworkStatus ledgers={ledgers} isLoading={ledgers.length === 0} />
-            <FeeStats feeStats={feeStats} isLoading={feeStatsLoading} />
-          </div>
-        </section>
-
-        {/* Charts Section */}
-        <section className="dashboard-section">
-          <h2 className="section-title">Network Activity</h2>
-          <div className="dashboard-grid">
-            <LedgerCloseChart ledgers={ledgers} isLoading={ledgers.length === 0} />
-            <TransactionsChart ledgers={ledgers} isLoading={ledgers.length === 0} />
-            <FailedTransactionsChart ledgers={ledgers} isLoading={ledgers.length === 0} />
-            {network === 'mainnet' && (
-              <HistoricalChart data={historicalLedgers} isLoading={historicalLoading} />
-            )}
-          </div>
-        </section>
-
-        {/* Lumen Supply Section (Mainnet only) */}
-        {network === 'mainnet' && (
-          <section className="dashboard-section">
-            <h2 className="section-title">Lumen Supply</h2>
-            <div className="dashboard-grid">
-              <LumenSupply supply={lumenSupply} isLoading={lumenSupplyLoading} />
-            </div>
-          </section>
-        )}
-
-        {/* Testnet specific: Friendbot */}
-        {network === 'testnet' && (
-          <section className="dashboard-section">
-            <h2 className="section-title">Testnet Accounts</h2>
-            <div className="dashboard-grid">
-              <FriendbotBalance />
-            </div>
-          </section>
-        )}
-
-        {/* Recent Operations Section */}
-        <section className="dashboard-section">
-          <h2 className="section-title">Recent Operations</h2>
-          <div className="dashboard-grid">
-            <RecentOperations 
-              operations={operations} 
-              network={network}
-              isLoading={operations.length === 0} 
-            />
-          </div>
-        </section>
+        {view !== 'testnet' && <NetworkPanel network="mainnet" labelSections={view === 'both'} />}
 
         {/* Network Nodes Link */}
         <section className="dashboard-section">
@@ -158,11 +86,17 @@ function App() {
           </div>
         </section>
 
+        {view !== 'mainnet' && <NetworkPanel network="testnet" labelSections={view === 'both'} />}
+
         {/* Status & Incidents */}
         <section className="dashboard-section">
           <h2 className="section-title">Status & Incidents</h2>
           <div className="dashboard-grid">
-            <Incidents statusPage={statusPage} isLoading={statusLoading} />
+            <Incidents
+              statusPage={statusPage}
+              history={incidentHistory?.incidents}
+              isLoading={statusLoading}
+            />
           </div>
         </section>
       </main>

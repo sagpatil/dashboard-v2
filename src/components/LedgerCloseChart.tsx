@@ -9,20 +9,25 @@ import {
   Cell,
 } from 'recharts';
 import type { LedgerRecord } from '../types';
+import { LEDGERS_FOR_CHARTS, getHorizonUrl } from '../lib/constants';
+import type { NetworkType } from '../lib/constants';
+import { ApiLink } from './ApiLink';
 
 interface LedgerCloseChartProps {
   ledgers: LedgerRecord[];
+  network: NetworkType;
   isLoading?: boolean;
 }
 
-export function LedgerCloseChart({ ledgers, isLoading }: LedgerCloseChartProps) {
+export function LedgerCloseChart({ ledgers, network, isLoading }: LedgerCloseChartProps) {
   const chartData = useMemo(() => {
     if (ledgers.length < 2) return [];
     
     // Calculate close times between consecutive ledgers
     const data = [];
+    // One extra ledger gives LEDGERS_FOR_CHARTS close-time intervals.
     // Reverse to show oldest to newest (left to right)
-    const sortedLedgers = [...ledgers].reverse();
+    const sortedLedgers = ledgers.slice(0, LEDGERS_FOR_CHARTS + 1).reverse();
     
     for (let i = 1; i < sortedLedgers.length; i++) {
       const current = new Date(sortedLedgers[i].closed_at);
@@ -62,6 +67,7 @@ export function LedgerCloseChart({ ledgers, isLoading }: LedgerCloseChartProps) 
     <div className="card col-span-6">
       <div className="card-header">
         <div className="card-title">Last {chartData.length} Ledgers Close Times</div>
+        <ApiLink href={`${getHorizonUrl(network)}/ledgers?order=desc&limit=${LEDGERS_FOR_CHARTS}`} />
       </div>
       <div className="chart-container">
         <ResponsiveContainer width="100%" height="100%">
