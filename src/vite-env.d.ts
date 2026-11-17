@@ -1,9 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly DEV: boolean;
-  readonly PROD: boolean;
-  readonly MODE: string;
+  // Origin of the API server when it is not the same as the app's
+  readonly VITE_API_BASE_URL?: string;
 }
 
 interface ImportMeta {

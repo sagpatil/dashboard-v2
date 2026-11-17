@@ -36,8 +36,8 @@ export function NetworkPanel({ network, children }: NetworkPanelProps) {
   const { data: operations = [], isLoading: operationsLoading } = useOperations(network, 20);
 
   // Lumen supply and historical data are mainnet only
-  const { data: lumenSupply, isLoading: lumenSupplyLoading } = useLumenSupply();
-  const { data: historicalLedgers, isLoading: historicalLoading } = useHistoricalLedgers();
+  const { data: lumenSupply, isLoading: lumenSupplyLoading } = useLumenSupply(isMainnet);
+  const { data: historicalLedgers, isLoading: historicalLoading } = useHistoricalLedgers(isMainnet);
 
   return (
     <>

@@ -1,28 +1,17 @@
-// Horizon API URLs
-export const HORIZON_MAINNET = 'https://horizon.stellar.org';
-export const HORIZON_TESTNET = 'https://horizon-testnet.stellar.org';
+import { HORIZON_URLS } from '../../shared/networks.ts';
+import type { NetworkType } from '../../shared/networks.ts';
 
-// Dashboard API (for lumen supply and historical data)
-// In production, use the full URL; in dev, Vite proxy handles it
-export const DASHBOARD_API = import.meta.env.DEV ? '' : 'https://dashboard.stellar.org';
+export type { NetworkType } from '../../shared/networks.ts';
+export { LEDGERS_IN_AVERAGE, LEDGERS_FOR_CHARTS } from '../../shared/networks.ts';
 
-// StatusPage API
-// In production, use the full URL; in dev, Vite proxy handles it
-export const STATUSPAGE_API = import.meta.env.DEV 
-  ? '/api/statuspage/v2/summary.json'
-  : 'https://9sl3dhr1twv1.statuspage.io/api/v2/summary.json';
+// Public Horizon URLs. The app reads its data through the API server;
+// these are only used for "view raw API" links.
+export const HORIZON_MAINNET = HORIZON_URLS.mainnet;
+export const HORIZON_TESTNET = HORIZON_URLS.testnet;
 
-export const STATUSPAGE_INCIDENTS_API = import.meta.env.DEV
-  ? '/api/statuspage/v2/incidents.json'
-  : 'https://9sl3dhr1twv1.statuspage.io/api/v2/incidents.json';
-
-// Network types
-export type NetworkType = 'mainnet' | 'testnet';
 export type NetworkView = NetworkType | 'both';
 
-export const getHorizonUrl = (network: NetworkType): string => {
-  return network === 'mainnet' ? HORIZON_MAINNET : HORIZON_TESTNET;
-};
+export const getHorizonUrl = (network: NetworkType): string => HORIZON_URLS[network];
 
 // Known accounts for labeling
 export const KNOWN_ACCOUNTS: Record<string, string> = {
@@ -71,7 +60,3 @@ export const UPGRADE_RESERVE_ACCOUNT = 'GBEZOC5U4TVH7ZY5N3FLYHTCZSI6VFGTULG7PBIT
 
 // Original supply amount
 export const ORIGINAL_SUPPLY = '100000000000';
-
-// Ledger calculations
-export const LEDGERS_IN_AVERAGE = 200;
-export const LEDGERS_FOR_CHARTS = 100;

@@ -1,8 +1,8 @@
 # Stellar Dashboard v2
 
-A modern, static replacement for [dashboard.stellar.org](https://dashboard.stellar.org) ([stellar/dashboard](https://github.com/stellar/dashboard)). Built with React, TypeScript, and Vite — no backend required.
+A modern replacement for [dashboard.stellar.org](https://dashboard.stellar.org) ([stellar/dashboard](https://github.com/stellar/dashboard)): a React + TypeScript frontend backed by a small Node.js API server.
 
-The original Stellar dashboard relies on a Node.js backend with Redis caching and Google BigQuery for analytics. This project reimagines it as a fully static single-page application that can be deployed anywhere (GitHub Pages, Vercel, Netlify, S3, etc.) while retaining the most useful features: live network monitoring, fee stats, lumen supply tracking, and recent operations.
+The server owns every connection to the outside world: it keeps one Horizon ledger stream per network, fetches and caches data from Horizon, dashboard.stellar.org and Stellar's StatusPage, and fans the results out to browsers. However many people have the dashboard open, upstream traffic stays the same, and the browser no longer needs the Stellar SDK or cross-origin access to third-party APIs.
 
 ## Features
 
@@ -18,117 +18,180 @@ The original Stellar dashboard relies on a Node.js backend with Redis caching an
 - **Testnet Friendbot balance** — shows the current XLM balance of the Friendbot faucet account (testnet only)
 - **Dark theme** — matches the Stellar Design System dark palette
 
+## Architecture
+
+```
+Browser (React)                API server (Fastify, server/)            Upstream
+───────────────                ─────────────────────────────            ────────
+EventSource  ─── /api/networks/:n/ledgers/stream ──┐
+                                                   ├── LedgerFeed ─ SSE ─── Horizon /ledgers
+React Query  ─── /api/networks/:n/stats ───────────┘   (1 per network, last 200 ledgers in memory)
+             ─── /api/networks/:n/fee-stats ───────┐
+             ─── /api/networks/:n/operations ──────┤
+             ─── /api/networks/:n/accounts/… ──────┼── TTL cache ─────────── Horizon
+             ─── /api/lumens, /api/history/daily ──┤   (coalesced,          dashboard.stellar.org
+             ─── /api/status/… ────────────────────┘    stale-if-error)     StatusPage
+```
+
+- **Ledger feeds** — one Horizon SSE connection per network for the whole server. Reconnects from the last seen ledger with exponential backoff, refetches the latest page after a long gap, and restarts the stream if Horizon goes quiet for 60s. Records are trimmed (no header XDR or links) before they reach browsers.
+- **Cache** — each upstream response is cached for a fixed TTL. Concurrent requests for an expired key share one upstream call, and if the upstream fails the last good value is served for a while (`X-Cache: STALE`) instead of an error. `Cache-Control` tells browsers how long the value stays fresh.
+- **Static hosting** — in production the same server serves the built app from `dist/`, so the app and API share an origin and there's nothing to configure for CORS.
+- **Shared code** — `shared/` holds the types, network constants and ledger statistics used by both the browser and the server.
+
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Framework | React 19 |
-| Language | TypeScript 5.9 (strict mode) |
-| Build | Vite 7 |
-| Data fetching | TanStack React Query 5 (polling) + Stellar SDK 14 (SSE streaming) |
+| Frontend | React 19, TypeScript 5.9 (strict), Vite 7 |
+| Data fetching | TanStack React Query 5 (polling) + EventSource (server-sent events) |
 | Charts | Recharts 3 |
 | Styling | Stellar Design System tokens + custom CSS (no CSS-in-JS) |
-| Precision math | BigNumber.js |
-| Date formatting | date-fns |
+| API server | Node.js 22.18+ running TypeScript directly (type stripping), Fastify 5 |
+| Tests | Node's built-in test runner |
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js v20+ and npm
+- Node.js **22.18+** (the server runs its `.ts` files directly) and npm
 
 ### Install & Run
 
 ```bash
-# Install dependencies
 npm install
+```
 
-# Start the dev server
+```bash
 npm run dev
 ```
 
-The app will be available at `http://localhost:5173`.
+This starts the API server on `http://localhost:8787` (restarting on changes) and the Vite dev server on `http://localhost:5173`, which proxies `/api` to the API server. Open `http://localhost:5173`. Use `npm run dev:server` or `npm run dev:web` to run either one alone.
 
-During development, Vite proxies two external APIs to avoid CORS issues:
-
-- `/api/dashboard/*` → `https://dashboard.stellar.org/api/*` (lumen supply, historical ledger data)
-- `/api/statuspage/*` → `https://9sl3dhr1twv1.statuspage.io/api/*` (Stellar StatusPage)
-
-All other data comes directly from the public Horizon API (`horizon.stellar.org` / `horizon-testnet.stellar.org`).
-
-### Build for Production
+### Build & Run in Production
 
 ```bash
 npm run build
 ```
 
-This runs the TypeScript compiler followed by a Vite production build. Output goes to `dist/`.
-
-> **Note:** In production, the proxy is not available. The app switches to calling the dashboard and StatusPage APIs directly (see `src/lib/constants.ts` for the URL logic). Make sure your hosting environment allows these cross-origin requests, or configure your own reverse proxy / CDN rules.
-
-### Preview the Production Build
-
 ```bash
-npm run preview
+npm start
 ```
 
-### Lint
+`npm run build` type-checks the frontend and server and builds the app into `dist/`. `npm start` runs the API server, which serves `dist/` and the API on port 8787.
+
+### Test, Lint, Type-check
+
+```bash
+npm test
+```
 
 ```bash
 npm run lint
 ```
 
+```bash
+npm run typecheck
+```
+
+The server tests use fake upstreams, so they need no network access.
+
+## Configuration
+
+All settings are optional environment variables. The server and Vite both read `.env.local` (see `.env.example`).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` / `HOST` | `8787` / `0.0.0.0` | Where the API server listens |
+| `LOG_LEVEL` | `info` | Pino log level (`silent` … `trace`) |
+| `HORIZON_MAINNET_URL` | `https://horizon.stellar.org` | Mainnet Horizon (e.g. your own node, to avoid public rate limits) |
+| `HORIZON_TESTNET_URL` | `https://horizon-testnet.stellar.org` | Testnet Horizon |
+| `DASHBOARD_API_URL` | `https://dashboard.stellar.org` | Source of lumen supply and daily history |
+| `STATUSPAGE_API_URL` | `https://9sl3dhr1twv1.statuspage.io` | Stellar StatusPage |
+| `LEDGER_FEEDS` | `mainnet,testnet` | Networks to keep a live ledger stream for |
+| `UPSTREAM_TIMEOUT_MS` | `10000` | Timeout for upstream requests |
+| `STATIC_DIR` | `./dist` | Built app to serve; set to an empty string for API only |
+| `CORS_ORIGINS` | *(none)* | Comma-separated origins allowed to call the API cross-origin |
+| `VITE_API_BASE_URL` | *(same origin)* | **Build-time**: API origin, when the app is hosted separately |
+
+## API
+
+All endpoints are `GET`. `:network` is `mainnet` or `testnet`.
+
+| Endpoint | Description | Cache TTL |
+|---|---|---|
+| `/api/health` | Uptime, cache size, connected stream clients, per-network feed status | none |
+| `/api/networks/:network/ledgers?limit=` | Latest ledgers held by the live feed, newest first (max 200) | live |
+| `/api/networks/:network/ledgers/stream` | Server-sent events: one `snapshot` (`{ network, ledgers }`), then a `ledger` event per new ledger | live |
+| `/api/networks/:network/stats` | Status, last ledger, avg close time, tx/ops per second, failure rate | live |
+| `/api/networks/:network/fee-stats` | Horizon `/fee_stats` | 5s |
+| `/api/networks/:network/operations?limit=` | Latest operations (1–200, default 20) | 5s |
+| `/api/networks/:network/accounts/:accountId/balance` | `{ accountId, balance }`, XLM balance (`0` if unfunded) | 60s |
+| `/api/lumens` | Lumen supply breakdown | 5 min |
+| `/api/history/daily` | Daily transaction and operation counts | 1 hr |
+| `/api/status/summary` | StatusPage summary | 60s |
+| `/api/status/incidents` | StatusPage incident history | 5 min |
+
+Errors are JSON (`{ "error", "message" }`): `400` for invalid input, `502` when an upstream fails with nothing cached, `503` when a network's feed is disabled or has no ledgers yet. `/api/health` always returns `200` while the process is up; its `status` field is `degraded` if a feed is disconnected or more than 60s behind.
+
 ## Project Structure
 
 ```
+server/
+├── src/
+│   ├── index.ts              # Entry point: config, listen, graceful shutdown
+│   ├── app.ts                # Fastify app factory: hooks, errors, static hosting
+│   ├── config.ts             # Environment variables → ServerConfig
+│   ├── ledgerFeed.ts         # One Horizon ledger stream per network + buffer + fan-out
+│   ├── cache.ts              # TTL cache with request coalescing and stale-if-error
+│   ├── upstream.ts           # fetch JSON with timeout → UpstreamError
+│   ├── sse.ts                # Server-sent events responses
+│   ├── context.ts            # Shared per-app state and the cached() helper
+│   └── routes/               # health, network (Horizon), external (lumens, history, status)
+└── test/                     # node:test suites with fake upstreams
+shared/
+├── types.ts                  # API response types used by app and server
+├── networks.ts               # Network names, Horizon URLs, window sizes
+└── ledgerStats.ts            # Network status / throughput from a list of ledgers
 src/
 ├── main.tsx                  # Entry point, QueryClient setup
 ├── App.tsx                   # Root component, network toggle, section layout
 ├── index.css                 # All styles (dark theme, 12-col grid, responsive)
-├── components/
-│   ├── NetworkStatus.tsx     # Live network health indicator
-│   ├── FeeStats.tsx          # Fee percentile breakdown + capacity
-│   ├── LedgerCloseChart.tsx  # Per-ledger close time bar chart
-│   ├── TransactionsChart.tsx # Successful/failed tx + operation charts
-│   ├── HistoricalChart.tsx   # 30-day daily transaction chart (mainnet)
-│   ├── LumenSupply.tsx       # XLM supply breakdown (mainnet)
-│   ├── RecentOperations.tsx  # Live operations table with account labels
-│   ├── AccountBalance.tsx    # Generic account balance card + Friendbot card
-│   └── Incidents.tsx         # StatusPage incidents & maintenances
+├── components/               # KPI strip, charts, fee stats, supply, operations, incidents…
 ├── hooks/
-│   └── useHorizon.ts         # All data hooks (SSE streams + React Query polls)
+│   └── useHorizon.ts         # Data hooks (EventSource stream + React Query polls of /api)
 ├── lib/
-│   ├── constants.ts          # Horizon URLs, known accounts, SDF accounts
+│   ├── api.ts                # API base URL and JSON fetch helper
+│   ├── constants.ts          # Horizon links, known accounts, SDF accounts
 │   └── format.ts             # Number/XLM/date/account formatting utilities
-├── types/
-│   └── index.ts              # TypeScript interfaces for all API responses
-└── assets/
-    └── react.svg             # (unused default asset)
+└── types/index.ts            # Re-exports shared/types.ts
 ```
 
 ## Data Sources
 
-| Data | Source | Method |
+| Data | Upstream | How the server gets it |
 |---|---|---|
-| Ledgers (live) | Horizon `/ledgers` | SSE stream via Stellar SDK |
-| Operations (live) | Horizon `/operations` | SSE stream via Stellar SDK |
-| Fee stats | Horizon `/fee_stats` | Polling (5s) |
-| Account balances | Horizon `/accounts/{id}` | Polling (60s) |
-| Lumen supply | `dashboard.stellar.org/api/v2/lumens` | Polling (5min) |
-| Historical ledgers | `dashboard.stellar.org/api/ledgers/public` | Polling (1hr) |
-| Incidents/status | StatusPage `summary.json` | Polling (60s) |
+| Ledgers (live) | Horizon `/ledgers` | One SSE stream per network |
+| Operations | Horizon `/operations` | On request, cached 5s |
+| Fee stats | Horizon `/fee_stats` | On request, cached 5s |
+| Account balances | Horizon `/accounts/{id}` | On request, cached 60s |
+| Lumen supply | `dashboard.stellar.org/api/v2/lumens` | On request, cached 5 min |
+| Historical ledgers | `dashboard.stellar.org/api/ledgers/public` | On request, cached 1 hr |
+| Incidents/status | StatusPage `summary.json`, `incidents.json` | On request, cached 1–5 min |
 
 ## How It Differs from the Original
 
-The [original dashboard](https://github.com/stellar/dashboard) is a full-stack application requiring Node.js, Redis, and optional BigQuery integration. This project:
+The [original dashboard](https://github.com/stellar/dashboard) runs a Node.js backend with Redis and Google BigQuery. This project keeps a backend but a much lighter one:
 
-- **Eliminates the backend** — all data comes from public APIs (Horizon, dashboard.stellar.org, StatusPage)
-- **Builds to static files** — deploy the `dist/` folder to any static hosting provider
-- **Uses a modern stack** — React 19, Vite 7, TypeScript 5.9, TanStack Query 5
+- **No external stores** — caches and the ledger window live in memory, so there is nothing to provision besides Node
+- **Thin by design** — the server aggregates and caches public APIs (Horizon, dashboard.stellar.org, StatusPage) rather than indexing the ledger itself
+- **Modern stack** — React 19, Vite 7, TypeScript 5.9, TanStack Query 5, Fastify 5
 - **Focuses on monitoring** — network health, fees, supply, and operations rather than account lookup or transaction exploration
 
 ### Not yet implemented
 
+- Own historical storage (daily stats still come from dashboard.stellar.org; in-memory state resets on restart)
+- Computing lumen supply from Horizon instead of dashboard.stellar.org
+- Rate limiting on the API (put it behind a proxy or CDN that does this for public deployments)
 - Account search / lookup
 - Transaction detail viewer
 - Node topology / validator explorer (links to [stellarbeat.io](https://stellarbeat.io) instead)
@@ -138,19 +201,24 @@ The [original dashboard](https://github.com/stellar/dashboard) is a full-stack a
 
 ## Deployment
 
-Since this builds to static files, you can deploy it anywhere:
+The app and API ship as one Node process.
 
-**GitHub Pages:**
+**Docker:**
 ```bash
-npm run build
-# Push dist/ to gh-pages branch or configure GitHub Actions
+docker build -t stellar-dashboard .
 ```
 
-**Vercel / Netlify:**
-Connect the repo and set the build command to `npm run build` with the output directory as `dist`. You may need to add rewrite rules to proxy the dashboard and StatusPage API calls if CORS is an issue.
+```bash
+docker run -p 8787:8787 stellar-dashboard
+```
 
-**Docker / Nginx:**
-Serve the `dist/` folder with any static file server. Add proxy rules for `/api/dashboard/` and `/api/statuspage/` if needed.
+The image runs the tests during the build and includes a `HEALTHCHECK` against `/api/health`.
+
+**Any Node host (Render, Fly.io, Railway, a VM…):** run `npm ci && npm run build`, then `npm start`. Set `PORT` if the platform assigns one.
+
+**Behind a reverse proxy:** keep `/api/networks/*/ledgers/stream` unbuffered (the server sends `X-Accel-Buffering: no` for nginx) and allow long-lived connections. Run a single instance, or several: each instance keeps its own feeds and cache.
+
+**Separate static hosting:** to keep the frontend on a static host, build it with `VITE_API_BASE_URL=https://your-api.example.com`, run the server with `STATIC_DIR=` and `CORS_ORIGINS=https://your-app.example.com`.
 
 ## License
 
