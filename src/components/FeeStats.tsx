@@ -22,8 +22,6 @@ export function FeeStats({ feeStats, network, isLoading }: FeeStatsProps) {
     );
   }
 
-  const capacityUsage = (parseFloat(feeStats.ledger_capacity_usage) * 100).toFixed(2);
-
   return (
     <div className="card col-span-6">
       <div className="card-header">
@@ -38,11 +36,6 @@ export function FeeStats({ feeStats, network, isLoading }: FeeStatsProps) {
         </a>
       </div>
       
-      <div style={{ marginBottom: 16 }}>
-        <div className="card-title" style={{ marginBottom: 4 }}>Capacity Usage</div>
-        <div className="card-value small">{capacityUsage}%</div>
-      </div>
-
       <div className="card-title" style={{ marginBottom: 8 }}>Accepted Fees (stroops)</div>
       <div className="fee-stats-grid">
         <div className="fee-stat-item">
