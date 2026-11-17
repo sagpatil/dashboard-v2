@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { NetworkType } from '../lib/constants';
 import {
   useLedgerStream,
@@ -6,7 +7,7 @@ import {
   useLumenSupply,
   useHistoricalLedgers,
 } from '../hooks/useHorizon';
-import { NetworkStatus } from './NetworkStatus';
+import { KpiStrip } from './KpiStrip';
 import { FeeStats } from './FeeStats';
 import { LumenSupply } from './LumenSupply';
 import { RecentOperations } from './RecentOperations';
@@ -17,14 +18,13 @@ import { FriendbotBalance } from './AccountBalance';
 
 interface NetworkPanelProps {
   network: NetworkType;
-  // Suffix section titles with the network name when several networks are shown
-  labelSections?: boolean;
+  // Rendered right after the headline section, e.g. another network's summary
+  children?: ReactNode;
 }
 
-export function NetworkPanel({ network, labelSections = false }: NetworkPanelProps) {
+export function NetworkPanel({ network, children }: NetworkPanelProps) {
   const isMainnet = network === 'mainnet';
   const networkLabel = isMainnet ? 'Live Network' : 'Test Network';
-  const title = (name: string) => (labelSections ? `${name} — ${networkLabel}` : name);
 
   // Ledger streaming
   const { ledgers, isStreaming } = useLedgerStream(network);
@@ -41,22 +41,24 @@ export function NetworkPanel({ network, labelSections = false }: NetworkPanelPro
 
   return (
     <>
-      {/* Network Status Section */}
+      {/* Headline numbers */}
       <section className="dashboard-section">
         <h2 className="section-title">
           {networkLabel}
           {isStreaming && <span className="live-indicator">Live</span>}
         </h2>
         <div className="dashboard-grid">
-          <NetworkStatus ledgers={ledgers} network={network} isLoading={ledgers.length === 0} />
-          <FeeStats feeStats={feeStats} network={network} isLoading={feeStatsLoading} />
+          <KpiStrip ledgers={ledgers} feeStats={feeStats} network={network} />
         </div>
       </section>
 
+      {children}
+
       {/* Charts Section */}
       <section className="dashboard-section">
-        <h2 className="section-title">{title('Network Activity')}</h2>
+        <h2 className="section-title">Network Activity</h2>
         <div className="dashboard-grid">
+          <FeeStats feeStats={feeStats} network={network} isLoading={feeStatsLoading} />
           <LedgerCloseChart ledgers={ledgers} network={network} isLoading={ledgers.length === 0} />
           <TransactionsChart ledgers={ledgers} network={network} isLoading={ledgers.length === 0} />
           <SuccessfulFailedChart ledgers={ledgers} network={network} isLoading={ledgers.length === 0} />
@@ -86,7 +88,7 @@ export function NetworkPanel({ network, labelSections = false }: NetworkPanelPro
 
       {/* Recent Operations Section */}
       <section className="dashboard-section">
-        <h2 className="section-title">{title('Recent Operations')}</h2>
+        <h2 className="section-title">Recent Operations</h2>
         <div className="dashboard-grid">
           <RecentOperations 
             operations={operations} 

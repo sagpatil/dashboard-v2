@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { NetworkView } from './lib/constants';
 import { useStatusPage, useIncidentHistory } from './hooks/useHorizon';
 import { NetworkPanel } from './components/NetworkPanel';
+import { TestnetSummary } from './components/TestnetSummary';
 import { Incidents } from './components/Incidents';
 import { MaintenanceBanner } from './components/MaintenanceBanner';
 
@@ -53,7 +54,12 @@ function App() {
       <MaintenanceBanner statusPage={statusPage} />
 
       <main className="app-main">
-        {view !== 'testnet' && <NetworkPanel network="mainnet" labelSections={view === 'both'} />}
+        {view !== 'testnet' && (
+          <NetworkPanel network="mainnet">
+            {view === 'both' && <TestnetSummary onOpen={() => setView('testnet')} />}
+          </NetworkPanel>
+        )}
+        {view === 'testnet' && <NetworkPanel network="testnet" />}
 
         {/* Network Nodes Link */}
         <section className="dashboard-section">
@@ -85,8 +91,6 @@ function App() {
             </div>
           </div>
         </section>
-
-        {view !== 'mainnet' && <NetworkPanel network="testnet" labelSections={view === 'both'} />}
 
         {/* Status & Incidents */}
         <section className="dashboard-section">
