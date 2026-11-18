@@ -21,3 +21,6 @@ export const LEDGERS_FOR_CHARTS = 100;
 // Stellar ed25519 public key (G... strkey). Checksum is not verified here;
 // Horizon rejects a bad checksum, and this keeps junk out of upstream URLs.
 export const isAccountId = (value: string): boolean => /^G[A-Z2-7]{55}$/.test(value);
+
+// Testnet faucet account, whose balance the dashboard shows
+export const FRIENDBOT_ACCOUNT = 'GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR';

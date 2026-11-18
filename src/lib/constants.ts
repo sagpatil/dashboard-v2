@@ -2,7 +2,7 @@ import { HORIZON_URLS } from '../../shared/networks.ts';
 import type { NetworkType } from '../../shared/networks.ts';
 
 export type { NetworkType } from '../../shared/networks.ts';
-export { LEDGERS_IN_AVERAGE, LEDGERS_FOR_CHARTS } from '../../shared/networks.ts';
+export { LEDGERS_IN_AVERAGE, LEDGERS_FOR_CHARTS, FRIENDBOT_ACCOUNT } from '../../shared/networks.ts';
 
 // Public Horizon URLs. The app reads its data through the API server;
 // these are only used for "view raw API" links.
@@ -49,8 +49,6 @@ export const SDF_ACCOUNTS = {
   marketingSupportHot: 'GBI5PADO5TEDY3R6WFAO2HEKBTTZS4LGR77XM4AHGN52H45ENBWGDFOH',
 };
 
-// Friendbot account (testnet)
-export const FRIENDBOT_ACCOUNT = 'GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR';
 
 // Void account (burned lumens)
 export const VOID_ACCOUNT = 'GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO';

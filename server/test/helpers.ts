@@ -1,3 +1,4 @@
+import { FRIENDBOT_ACCOUNT } from '../../shared/networks.ts';
 import type { LedgerRecord } from '../../shared/types.ts';
 import type { ServerConfig } from '../src/config.ts';
 import type { FetchFn } from '../src/upstream.ts';
@@ -13,6 +14,15 @@ export const testConfig = (overrides: Partial<ServerConfig> = {}): ServerConfig 
   upstreamTimeoutMs: 1000,
   staticDir: null,
   corsOrigins: [],
+  trustProxy: false,
+  rateLimitMax: 1000,
+  rateLimitWindowMs: 60_000,
+  maxStreamClients: 100,
+  maxStreamsPerIp: 10,
+  allowedAccounts: [FRIENDBOT_ACCOUNT],
+  metricsEnabled: true,
+  metricsToken: null,
+  shutdownTimeoutMs: 1000,
   ...overrides,
 });
 

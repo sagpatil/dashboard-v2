@@ -49,6 +49,44 @@ describe('TtlCache', () => {
     await assert.rejects(cache.get('k', { ttlMs: 100, staleIfErrorMs: 100 }, fail), /upstream down/);
   });
 
+  it('settles for the stale value when a refresh is slow, and finishes it in the background', async () => {
+    const c = clock();
+    const cache = new TtlCache(10, c.now);
+    await cache.get('k', { ttlMs: 100 }, async () => 'old');
+    c.advance(150);
+
+    let finish!: (value: string) => void;
+    const slow = () => new Promise<string>(resolve => { finish = resolve; });
+    const result = await cache.get('k', { ttlMs: 100, staleIfErrorMs: 1000, maxWaitMs: 10 }, slow);
+    assert.equal(result.status, 'stale');
+    assert.equal(result.value, 'old');
+
+    finish('new');
+    await new Promise(r => setTimeout(r, 0));
+    assert.deepEqual(await cache.get('k', { ttlMs: 100 }, slow), { value: 'new', status: 'hit', ageMs: 0 });
+  });
+
+  it('does not retry the upstream right after a failed refresh', async () => {
+    const c = clock();
+    const cache = new TtlCache(10, c.now);
+    await cache.get('k', { ttlMs: 100 }, async () => 'good');
+    c.advance(150);
+    let attempts = 0;
+    const fail = async () => { attempts++; throw new Error('down'); };
+    const options = { ttlMs: 100, staleIfErrorMs: 10_000 };
+
+    assert.equal((await cache.get('k', options, fail)).status, 'stale');
+    assert.equal((await cache.get('k', options, fail)).status, 'stale');
+    assert.equal(attempts, 1, 'second request is answered from the stale value without a new attempt');
+
+    c.advance(100); // backoff (one TTL) has passed
+    await cache.get('k', options, fail);
+    assert.equal(attempts, 2);
+
+    c.advance(100);
+    assert.deepEqual(await cache.get('k', options, async () => 'recovered'), { value: 'recovered', status: 'miss', ageMs: 0 });
+  });
+
   it('does not cache failures', async () => {
     const cache = new TtlCache();
     await assert.rejects(cache.get('k', { ttlMs: 100 }, async () => { throw new Error('x'); }));

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, type-check, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t dashboard-v2 .
+      - name: Start the image and wait for it to answer
+        run: |
+          docker run -d --name dashboard -p 8787:8787 dashboard-v2
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/api/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          docker logs dashboard
+          exit 1

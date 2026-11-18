@@ -4,7 +4,7 @@
 // host the frontend separately from the API.
 export const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
 
-export const apiUrl = (path: string) => `${API_BASE}/api${path}`;
+export const apiUrl = (path: string) => `${API_BASE}/api/v1${path}`;
 
 export const getJson = async <T>(path: string): Promise<T> => {
   const response = await fetch(apiUrl(path));

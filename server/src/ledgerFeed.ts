@@ -4,7 +4,8 @@ import { LEDGERS_IN_AVERAGE } from '../../shared/networks.ts';
 import type { NetworkType } from '../../shared/networks.ts';
 import type { HorizonResponse, LedgerRecord } from '../../shared/types.ts';
 import { fetchJson } from './upstream.ts';
-import type { FetchFn } from './upstream.ts';
+import type { FetchFn, FetchJsonOptions } from './upstream.ts';
+import { isLedger, isLedgerPage } from './validate.ts';
 
 type Logger = Pick<FastifyBaseLogger, 'info' | 'warn' | 'debug'>;
 type Listener = (ledger: LedgerRecord) => void;
@@ -20,6 +21,8 @@ export interface LedgerFeedOptions {
   stallTimeoutMs?: number;
   minRetryMs?: number;
   maxRetryMs?: number;
+  // Receives the outcome of each backfill request, for metrics
+  onUpstreamResult?: FetchJsonOptions['onResult'];
 }
 
 export interface LedgerFeedStatus {
@@ -69,6 +72,7 @@ export class LedgerFeed {
   private readonly stallTimeoutMs: number;
   private readonly minRetryMs: number;
   private readonly maxRetryMs: number;
+  private readonly onUpstreamResult: FetchJsonOptions['onResult'];
 
   private ledgers: LedgerRecord[] = [];
   private readonly listeners = new Set<Listener>();
@@ -92,6 +96,7 @@ export class LedgerFeed {
     this.stallTimeoutMs = options.stallTimeoutMs ?? 60_000;
     this.minRetryMs = options.minRetryMs ?? 1_000;
     this.maxRetryMs = options.maxRetryMs ?? 60_000;
+    this.onUpstreamResult = options.onUpstreamResult;
   }
 
   start(): void {
@@ -176,7 +181,9 @@ export class LedgerFeed {
 
       this.reconnects++;
       try {
-        await sleep(delay, undefined, { signal: this.stop$.signal });
+        // Jitter keeps several instances from retrying in step
+        const jittered = delay * (0.75 + Math.random() * 0.5);
+        await sleep(jittered, undefined, { signal: this.stop$.signal });
       } catch {
         break; // stopped while waiting
       }
@@ -192,7 +199,11 @@ export class LedgerFeed {
 
   private async backfill(): Promise<void> {
     const url = `${this.horizonUrl}/ledgers?order=desc&limit=${this.bufferSize}`;
-    const page = await fetchJson<HorizonResponse<LedgerRecord>>(this.fetchImpl, url, this.timeoutMs);
+    const page = await fetchJson<HorizonResponse<LedgerRecord>>(this.fetchImpl, url, {
+      timeoutMs: this.timeoutMs,
+      validate: isLedgerPage,
+      onResult: this.onUpstreamResult,
+    });
     this.ledgers = page._embedded.records
       .map(trimLedger)
       .sort((a, b) => b.sequence - a.sequence)
@@ -268,8 +279,10 @@ export class LedgerFeed {
       return;
     }
     // Horizon sends "hello" / "byebye" strings as well as ledger objects
-    if (payload && typeof payload === 'object' && 'sequence' in payload) {
+    if (isLedger(payload)) {
       this.ingest(payload as LedgerRecord);
+    } else if (payload && typeof payload === 'object') {
+      this.logger.warn({ network: this.network }, 'ignored a malformed ledger from the stream');
     }
   }
 

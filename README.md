@@ -21,20 +21,26 @@ The server owns every connection to the outside world: it keeps one Horizon ledg
 ## Architecture
 
 ```
-Browser (React)                API server (Fastify, server/)            Upstream
-───────────────                ─────────────────────────────            ────────
-EventSource  ─── /api/networks/:n/ledgers/stream ──┐
-                                                   ├── LedgerFeed ─ SSE ─── Horizon /ledgers
-React Query  ─── /api/networks/:n/stats ───────────┘   (1 per network, last 200 ledgers in memory)
-             ─── /api/networks/:n/fee-stats ───────┐
-             ─── /api/networks/:n/operations ──────┤
-             ─── /api/networks/:n/accounts/… ──────┼── TTL cache ─────────── Horizon
-             ─── /api/lumens, /api/history/daily ──┤   (coalesced,          dashboard.stellar.org
-             ─── /api/status/… ────────────────────┘    stale-if-error)     StatusPage
+Browser (React)             API server (Fastify, server/)                Upstream
+───────────────             ─────────────────────────────                ────────
+EventSource  ─── /networks/:n/ledgers/stream ──┐
+                                               ├── LedgerFeed ─ SSE ───── Horizon /ledgers
+React Query  ─── /networks/:n/stats ───────────┘   (1 per network, last 200 ledgers in memory)
+             ─── /networks/:n/fee-stats ───────┐
+             ─── /networks/:n/operations ──────┤
+             ─── /networks/:n/accounts/… ──────┼── TTL cache ──────────── Horizon
+             ─── /lumens, /history/daily ──────┤   (coalesced,           dashboard.stellar.org
+             ─── /status/… ────────────────────┘    stale-if-error)      StatusPage
+
+(paths are under /api/v1)
 ```
 
-- **Ledger feeds** — one Horizon SSE connection per network for the whole server. Reconnects from the last seen ledger with exponential backoff, refetches the latest page after a long gap, and restarts the stream if Horizon goes quiet for 60s. Records are trimmed (no header XDR or links) before they reach browsers.
-- **Cache** — each upstream response is cached for a fixed TTL. Concurrent requests for an expired key share one upstream call, and if the upstream fails the last good value is served for a while (`X-Cache: STALE`) instead of an error. `Cache-Control` tells browsers how long the value stays fresh.
+- **Ledger feeds** — one Horizon SSE connection per network for the whole server. Reconnects from the last seen ledger with jittered exponential backoff, refetches the latest page after a long gap, and restarts the stream if Horizon goes quiet for 60s. Records are trimmed (no header XDR or links) before they reach browsers.
+- **Cache** — each upstream response is cached for a fixed TTL. Concurrent requests for an expired key share one upstream call. A request waits at most 2s for a refresh before it is given the previous value (`X-Cache: STALE`) while the refresh finishes in the background, and after a failed refresh the upstream is left alone for a few seconds. `Cache-Control` tells browsers how long a value stays fresh.
+- **Upstream checks** — every upstream response is checked for the fields the dashboard reads. A wrong shape counts as an upstream failure, so the cached value keeps being served instead of bad data reaching browsers.
+- **Abuse limits** — per-IP rate limiting on the API, caps on open event streams (total and per IP), slow stream clients are dropped, and account balances can only be looked up for allowlisted accounts.
+- **Security headers** — a strict Content-Security-Policy (scripts and connections from the same origin only), HSTS, `nosniff`, and no framing.
+- **Observability** — structured JSON logs, Prometheus metrics at `/metrics`, and separate liveness and readiness endpoints.
 - **Static hosting** — in production the same server serves the built app from `dist/`, so the app and API share an origin and there's nothing to configure for CORS.
 - **Shared code** — `shared/` holds the types, network constants and ledger statistics used by both the browser and the server.
 
@@ -48,6 +54,7 @@ React Query  ─── /api/networks/:n/stats ───────────�
 | Styling | Stellar Design System tokens + custom CSS (no CSS-in-JS) |
 | API server | Node.js 22.18+ running TypeScript directly (type stripping), Fastify 5 |
 | Tests | Node's built-in test runner |
+| CI | GitHub Actions: lint, type-check, tests, build, dependency audit, Docker image |
 
 ## Getting Started
 
@@ -97,7 +104,7 @@ The server tests use fake upstreams, so they need no network access.
 
 ## Configuration
 
-All settings are optional environment variables. The server and Vite both read `.env.local` (see `.env.example`).
+All settings are optional environment variables. The server and Vite both read `.env.local` (see `.env.example`). Invalid values stop the server at startup with a message listing every problem.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -111,27 +118,57 @@ All settings are optional environment variables. The server and Vite both read `
 | `UPSTREAM_TIMEOUT_MS` | `10000` | Timeout for upstream requests |
 | `STATIC_DIR` | `./dist` | Built app to serve; set to an empty string for API only |
 | `CORS_ORIGINS` | *(none)* | Comma-separated origins allowed to call the API cross-origin |
+| `TRUST_PROXY` | `false` | Whose `X-Forwarded-For` to believe: `true`, a hop count (e.g. `1`), or proxy IPs/CIDR ranges. **Set this when running behind a proxy or load balancer**, or every visitor shares the proxy's address for rate limiting |
+| `RATE_LIMIT_MAX` | `600` | Requests each client IP may make per window |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window |
+| `MAX_STREAM_CLIENTS` | `2000` | Open ledger event streams allowed in total |
+| `MAX_STREAMS_PER_IP` | `20` | Open ledger event streams allowed per client IP |
+| `ALLOWED_ACCOUNTS` | Friendbot | Comma-separated accounts whose balance may be looked up |
+| `METRICS_ENABLED` | `true` | Serve Prometheus metrics at `/metrics` |
+| `METRICS_TOKEN` | *(none)* | If set, `/metrics` requires `Authorization: Bearer <token>` |
+| `SHUTDOWN_TIMEOUT_MS` | `10000` | How long a graceful shutdown may take before the process exits anyway |
 | `VITE_API_BASE_URL` | *(same origin)* | **Build-time**: API origin, when the app is hosted separately |
 
 ## API
 
-All endpoints are `GET`. `:network` is `mainnet` or `testnet`.
+The API is versioned under `/api/v1`; all endpoints are `GET`, and `:network` is `mainnet` or `testnet`. A machine-readable description is served at `/api/v1/openapi.json` (OpenAPI 3).
 
 | Endpoint | Description | Cache TTL |
 |---|---|---|
-| `/api/health` | Uptime, cache size, connected stream clients, per-network feed status | none |
-| `/api/networks/:network/ledgers?limit=` | Latest ledgers held by the live feed, newest first (max 200) | live |
-| `/api/networks/:network/ledgers/stream` | Server-sent events: one `snapshot` (`{ network, ledgers }`), then a `ledger` event per new ledger | live |
-| `/api/networks/:network/stats` | Status, last ledger, avg close time, tx/ops per second, failure rate | live |
-| `/api/networks/:network/fee-stats` | Horizon `/fee_stats` | 5s |
-| `/api/networks/:network/operations?limit=` | Latest operations (1–200, default 20) | 5s |
-| `/api/networks/:network/accounts/:accountId/balance` | `{ accountId, balance }`, XLM balance (`0` if unfunded) | 60s |
-| `/api/lumens` | Lumen supply breakdown | 5 min |
-| `/api/history/daily` | Daily transaction and operation counts | 1 hr |
-| `/api/status/summary` | StatusPage summary | 60s |
-| `/api/status/incidents` | StatusPage incident history | 5 min |
+| `/api/v1/networks/:network/ledgers?limit=` | Latest ledgers held by the live feed, newest first (max 200) | live |
+| `/api/v1/networks/:network/ledgers/stream` | Server-sent events: one `snapshot` (`{ network, ledgers }`), then a `ledger` event per new ledger | live |
+| `/api/v1/networks/:network/stats` | Status, last ledger, avg close time, tx/ops per second, failure rate | live |
+| `/api/v1/networks/:network/fee-stats` | Horizon `/fee_stats` | 5s |
+| `/api/v1/networks/:network/operations?limit=` | Latest operations (1–200, default 20) | 5s |
+| `/api/v1/networks/:network/accounts/:accountId/balance` | `{ accountId, balance }`, XLM balance (`0` if unfunded); allowlisted accounts only | 60s |
+| `/api/v1/lumens` | Lumen supply breakdown | 5 min |
+| `/api/v1/history/daily` | Daily transaction and operation counts | 1 hr |
+| `/api/v1/status/summary` | StatusPage summary | 60s |
+| `/api/v1/status/incidents` | StatusPage incident history | 5 min |
 
-Errors are JSON (`{ "error", "message" }`): `400` for invalid input, `502` when an upstream fails with nothing cached, `503` when a network's feed is disabled or has no ledgers yet. `/api/health` always returns `200` while the process is up; its `status` field is `degraded` if a feed is disconnected or more than 60s behind.
+Errors are JSON (`{ "error", "message" }`):
+
+| Status | Meaning |
+|---|---|
+| `400` | Invalid input |
+| `403` | Account not on the allowlist |
+| `429` | Rate limit reached, or too many event streams from one address (see `Retry-After`) |
+| `502` | An upstream failed or returned an unexpected response, and nothing is cached |
+| `503` | A network's feed is disabled or has no ledgers yet, or the server has no room for another event stream |
+
+Responses over 1 KB are compressed (gzip/brotli) when the client accepts it.
+
+### Operational endpoints
+
+These are unversioned, not rate limited, and not part of the OpenAPI document.
+
+| Endpoint | Description |
+|---|---|
+| `/api/health` | Liveness. Always `200` while the process is up; the body reports uptime, cache size, stream clients and each feed's state, with `status` `ok` or `degraded` |
+| `/api/health/ready` | Readiness. Same body; `503` until every ledger feed is connected and less than 60s behind |
+| `/metrics` | Prometheus metrics: request counts and durations by route, cache hit/miss/stale by resource, upstream requests by host and outcome, feed state, open streams, memory |
+
+`/metrics` is public by default. Set `METRICS_TOKEN`, or block the path at your proxy, if you don't want it exposed.
 
 ## Project Structure
 
@@ -140,17 +177,20 @@ server/
 ├── src/
 │   ├── index.ts              # Entry point: config, listen, graceful shutdown
 │   ├── app.ts                # Fastify app factory: hooks, errors, static hosting
-│   ├── config.ts             # Environment variables → ServerConfig
+│   ├── config.ts             # Environment variables → validated ServerConfig
 │   ├── ledgerFeed.ts         # One Horizon ledger stream per network + buffer + fan-out
-│   ├── cache.ts              # TTL cache with request coalescing and stale-if-error
-│   ├── upstream.ts           # fetch JSON with timeout → UpstreamError
-│   ├── sse.ts                # Server-sent events responses
+│   ├── cache.ts              # TTL cache: coalescing, bounded waits, stale-if-error
+│   ├── upstream.ts           # fetch JSON with timeout and shape check → UpstreamError
+│   ├── validate.ts           # Shape checks for upstream responses
+│   ├── sse.ts                # Server-sent event streams and their limits
+│   ├── metrics.ts            # Prometheus counters, gauges and histograms
+│   ├── schemas.ts            # JSON schemas shared by routes (validation + OpenAPI)
 │   ├── context.ts            # Shared per-app state and the cached() helper
-│   └── routes/               # health, network (Horizon), external (lumens, history, status)
+│   └── routes/               # health + metrics, network (Horizon), external (lumens, history, status)
 └── test/                     # node:test suites with fake upstreams
 shared/
 ├── types.ts                  # API response types used by app and server
-├── networks.ts               # Network names, Horizon URLs, window sizes
+├── networks.ts               # Network names, Horizon URLs, window sizes, Friendbot account
 └── ledgerStats.ts            # Network status / throughput from a list of ledgers
 src/
 ├── main.tsx                  # Entry point, QueryClient setup
@@ -191,7 +231,7 @@ The [original dashboard](https://github.com/stellar/dashboard) runs a Node.js ba
 
 - Own historical storage (daily stats still come from dashboard.stellar.org; in-memory state resets on restart)
 - Computing lumen supply from Horizon instead of dashboard.stellar.org
-- Rate limiting on the API (put it behind a proxy or CDN that does this for public deployments)
+- Shared state between instances (each keeps its own cache, feeds and rate-limit counters)
 - Account search / lookup
 - Transaction detail viewer
 - Node topology / validator explorer (links to [stellarbeat.io](https://stellarbeat.io) instead)
@@ -212,13 +252,17 @@ docker build -t stellar-dashboard .
 docker run -p 8787:8787 stellar-dashboard
 ```
 
-The image runs the tests during the build and includes a `HEALTHCHECK` against `/api/health`.
+The image runs the tests during the build, contains only the server's dependencies, runs as a non-root user, and includes a `HEALTHCHECK` against `/api/health`.
 
-**Any Node host (Render, Fly.io, Railway, a VM…):** run `npm ci && npm run build`, then `npm start`. Set `PORT` if the platform assigns one.
+**Any Node host (Render, Fly.io, Railway, a VM…):** run `npm ci && npm run build`, then `npm start`. Set `PORT` if the platform assigns one. Point the platform's health check at `/api/health` and, if it has one, its readiness check at `/api/health/ready`.
 
-**Behind a reverse proxy:** keep `/api/networks/*/ledgers/stream` unbuffered (the server sends `X-Accel-Buffering: no` for nginx) and allow long-lived connections. Run a single instance, or several: each instance keeps its own feeds and cache.
+**Behind a reverse proxy or load balancer:**
+- Terminate TLS at the proxy; the server sends HSTS but speaks plain HTTP.
+- Set `TRUST_PROXY` (e.g. `1` for a single proxy) so rate limits and logs use the visitor's address, not the proxy's.
+- Keep `/api/v1/networks/*/ledgers/stream` unbuffered (the server sends `X-Accel-Buffering: no` for nginx) and allow long-lived connections.
+- Each instance keeps its own feeds, cache and rate-limit counters, so with several instances the effective rate limit is per instance.
 
-**Separate static hosting:** to keep the frontend on a static host, build it with `VITE_API_BASE_URL=https://your-api.example.com`, run the server with `STATIC_DIR=` and `CORS_ORIGINS=https://your-app.example.com`.
+**Separate static hosting:** to keep the frontend on a static host, build it with `VITE_API_BASE_URL=https://your-api.example.com`, run the server with `STATIC_DIR=` and `CORS_ORIGINS=https://your-app.example.com`. The static host is then responsible for the app's own security headers.
 
 ## License
 
